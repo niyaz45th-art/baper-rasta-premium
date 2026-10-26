@@ -1,0 +1,7 @@
+{
+  "name": "baper-rasta-premium",
+  "type": "module",
+  "dependencies": {
+    "formidable": "^3.5.1"
+  }
+}
