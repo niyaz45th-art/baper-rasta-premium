@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#070709">
+  <title>BAPER RASTA PREMIUM</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background:#070709; color:#fff; }
+    button:disabled { opacity:.55; cursor:not-allowed; }
+  </style>
+</head>
+<body class="min-h-screen p-4">
+  <main class="mx-auto w-full max-w-2xl">
+    <h1 class="mt-6 text-center text-3xl font-black">
+      🚌 BAPER RASTA <span class="text-yellow-400">PREMIUM</span>
+    </h1>
+    <p class="mt-2 text-center text-zinc-400">বাসের ছবি থেকে AI 3D GLB মডেল তৈরি করো</p>
+
+    <section class="mt-8 rounded-3xl border-2 border-dashed border-yellow-400/50 bg-zinc-900 p-5">
+      <label for="fileInput" class="mb-2 block font-bold">বাসের ছবি নির্বাচন করো</label>
+      <input id="fileInput" type="file" accept="image/jpeg,image/png,image/webp"
+        class="w-full rounded-xl bg-zinc-800 p-3">
+
+      <img id="preview" alt="ছবির প্রিভিউ"
+        class="mx-auto mt-4 hidden max-h-64 rounded-xl">
+
+      <button id="makeBtn"
+        class="mt-5 w-full rounded-xl bg-yellow-400 py-4 font-black text-black">
+        🤖 AI দিয়ে GLB বানাও
+      </button>
+
+      <div id="log" role="status" aria-live="polite"
+        class="mt-4 whitespace-pre-wrap break-words rounded-xl bg-black p-4 text-sm text-yellow-300">প্রস্তুত ✅</div>
+
+      <div id="result" class="mt-4 hidden">
+        <a id="dlBtn" href="#" target="_blank" rel="noopener noreferrer"
+          class="block rounded-xl bg-white py-4 text-center font-bold text-black">
+          📥 GLB ডাউনলোড
+        </a>
+      </div>
+    </section>
+
+    <p class="mt-5 text-center text-xs text-zinc-500">
+      Tripo AI account, API access এবং পর্যাপ্ত credits লাগতে পারে।
+    </p>
+  </main>
+
+<script>
+const fileInput = document.getElementById("fileInput");
+const makeBtn = document.getElementById("makeBtn");
+const log = document.getElementById("log");
+const preview = document.getElementById("preview");
+const result = document.getElementById("result");
+const dlBtn = document.getElementById("dlBtn");
+
+let previewUrl = null;
+let pollTimer = null;
+let busy = false;
+
+fileInput.addEventListener("change", () => {
+  const file = fileInput.files[0];
+  result.classList.add("hidden");
+  if (previewUrl) URL.revokeObjectURL(previewUrl);
+  previewUrl = null;
+
+  if (!file) {
+    preview.classList.add("hidden");
+    return;
+  }
+  if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+    log.textContent = "JPG, PNG অথবা WEBP ছবি নির্বাচন করো।";
+    fileInput.value = "";
+    preview.classList.add("hidden");
+    return;
+  }
+  if (file.size > 10 * 1024 * 1024) {
+    log.textContent = "ছবির সাইজ ১০ MB-এর কম হতে হবে।";
+    fileInput.value = "";
+    preview.classList.add("hidden");
+    return;
+  }
+
+  previewUrl = URL.createObjectURL(file);
+  preview.src = previewUrl;
+  preview.classList.remove("hidden");
+  log.textContent = "ছবি প্রস্তুত ✅";
+});
+
+async function apiJSON(url, options = {}) {
+  const response = await fetch(url, options);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.error || data.message || `Server error (${response.status})`);
+  }
+  if (data.error) throw new Error(data.error);
+  return data;
+}
+
+function finishButton(text) {
+  busy = false;
+  makeBtn.disabled = false;
+  makeBtn.textContent = text;
+}
+
+makeBtn.addEventListener("click", async () => {
+  if (busy) return;
+  const file = fileInput.files[0];
+  if (!file) {
+    log.textContent = "প্রথমে বাসের একটি ছবি নির্বাচন করো।";
+    return;
+  }
+
+  busy = true;
+  makeBtn.disabled = true;
+  makeBtn.textContent = "⏳ AI কাজ করছে...";
+  result.classList.add("hidden");
+  if (pollTimer) clearTimeout(pollTimer);
+
+  try {
+    log.textContent = "১/৩ — ছবি আপলোড হচ্ছে...";
+    const fd = new FormData();
+    fd.append("file", file);
+
+    const created = await apiJSON("/api/create", { method: "POST", body: fd });
+    const taskId = created?.data?.task_id;
+    if (!taskId) throw new Error("AI Task ID পাওয়া যায়নি।");
+
+    log.textContent = `২/৩ — AI মডেল তৈরি করছে...\nTask: ${taskId}`;
+    let attempts = 0;
+    const maxAttempts = 240;
+
+    const checkStatus = async () => {
+      try {
+        attempts++;
+        if (attempts > maxAttempts) {
+          throw new Error("অনেক সময় হয়েছে। পরে আবার Status পরীক্ষা করো।");
+        }
+
+        const response = await apiJSON("/api/status?taskId=" + encodeURIComponent(taskId));
+        const task = response?.data || {};
+        const status = String(task.status || "queued").toLowerCase();
+        const progress = Number(task.progress || 0);
+
+        log.textContent = `২/৩ — Status: ${status}\nProgress: ${progress}%\nTask: ${taskId}`;
+
+        if (status === "success") {
+          const modelUrl = task.output?.model;
+          if (!modelUrl || !/^https:\/\//i.test(modelUrl)) {
+            throw new Error("মডেল তৈরি হয়েছে, কিন্তু সঠিক ডাউনলোড URL পাওয়া যায়নি।");
+          }
+          dlBtn.href = modelUrl;
+          result.classList.remove("hidden");
+          log.textContent = "৩/৩ — GLB তৈরি হয়েছে! ✅ এখন ডাউনলোড করো।";
+          finishButton("🤖 আরেকটি মডেল বানাও");
+          return;
+        }
+
+        if (["failed", "cancelled", "canceled"].includes(status)) {
+          throw new Error("AI মডেল তৈরি করতে পারেনি: " + status);
+        }
+        pollTimer = setTimeout(checkStatus, 3000);
+      } catch (error) {
+        log.textContent = "সমস্যা: " + error.message;
+        finishButton("🔄 আবার চেষ্টা করো");
+      }
+    };
+    await checkStatus();
+  } catch (error) {
+    log.textContent = "সমস্যা: " + error.message;
+    finishButton("🔄 আবার চেষ্টা করো");
+  }
+});
+</script>
+</body>
+</html>
