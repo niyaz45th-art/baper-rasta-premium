@@ -1,0 +1,12 @@
+{
+  "name": "baper-rasta-premium",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "formidable": "^3.5.1"
+  }
+}
