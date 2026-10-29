@@ -1,733 +1,216 @@
-
-import os
-import uuid
-import asyncio
-import requests
-
-from pathlib import Path
-from typing import Optional
-
-from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.responses import (
-    HTMLResponse,
-    FileResponse,
-    JSONResponse,
-)
+import os, uuid, asyncio, requests
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
+from pathlib import Path
 
-
-app = FastAPI(title="NYZ REAL 3D AI")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-BASE = Path(__file__).resolve().parent
+app = FastAPI(title="Baper Rasta Premium REAL 3D")
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+BASE = Path(".")
 JOBS_DIR = BASE / "jobs"
-JOBS_DIR.mkdir(parents=True, exist_ok=True)
-
-TRIPO_API_KEY = os.getenv("TRIPO_API_KEY", "").strip()
-TRIPO_BASE = "https://openapi.tripo3d.ai/v3"
-
-# কাজের অবস্থা
+JOBS_DIR.mkdir(exist_ok=True)
 JOBS = {}
 
-MAX_IMAGE_SIZE = 20 * 1024 * 1024
-ALLOWED_TYPES = {
-    "image/jpeg",
-    "image/png",
-    "image/webp",
-}
+FRONTEND_HTML = """<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Baper Rasta Premium - REAL 3D</title>
+<script type="module" src="https://unpkg.com/@google/model-viewer@3.4.0/dist/model-viewer.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;font-family:system-ui}
+body{background:#07070a;color:#fff;min-height:100vh}
+.top{padding:14px 18px;display:flex;justify-content:space-between;background:#101016;border-bottom:1px solid #222}
+.logo{font-weight:900}.logo b{color:#8b5cf6}
+.wrap{max-width:520px;margin:0 auto;padding:18px}
+.card{background:#13131b;border:1px solid #23232f;border-radius:24px;padding:22px;margin-top:18px}
+.title{font-size:28px;font-weight:900;text-align:center}.title span{background:linear-gradient(90deg,#8b5cf6,#ec4899);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.sub{color:#9ca3af;text-align:center;font-size:14px;margin:10px 0 18px}
+.input{width:100%;margin-top:12px;background:#0a0a12;border:1px solid #252538;border-radius:12px;padding:12px;color:#fff}
+.btn{width:100%;margin-top:14px;background:#8b5cf6;border:none;padding:15px;border-radius:14px;color:#fff;font-weight:800;font-size:16px;cursor:pointer}
+.btn:disabled{opacity:0.5}
+.status{margin-top:14px;background:#0e0e16;border:1px solid #23232f;border-radius:12px;padding:12px;font-size:13px;display:none;white-space:pre-wrap}
+.done{margin-top:14px;display:none}
+.done a{display:block;background:#10b981;color:#fff;text-align:center;padding:14px;border-radius:12px;text-decoration:none;font-weight:800;margin-top:10px}
+.small{color:#8b5cf6;word-break:break-all;font-size:12px;background:#0a0a12;padding:8px;border-radius:8px;display:block;margin-top:8px}
+model-viewer{width:100%;height:380px;background:#0a0a12;border-radius:16px;margin-top:14px}
+.hint{font-size:12px;color:#9ca3af;text-align:center;margin-top:8px}
+</style>
+</head>
+<body>
+<div class="top"><div class="logo">BAPER <b>RASTA</b> PREMIUM</div><div style="font-size:11px;background:#10b981;color:#000;padding:4px 10px;border-radius:20px;font-weight:800">● LIVE • REAL 3D</div></div>
+<div class="wrap">
+<div class="title">ছবি থেকে <span>REAL 3D</span></div>
+<div class="sub">আপলোড করো — আসল GLB হবে — এখানেই ঘুরিয়ে দেখো</div>
+<div class="card">
+<input type="file" id="file" accept="image/*" style="width:100%;padding:10px;background:#0a0a12;border:1px dashed #333;border-radius:10px;color:#fff">
+<img id="preview" style="display:none;width:100%;border-radius:12px;margin-top:12px;max-height:240px;object-fit:contain;background:#000">
+<input id="label" class="input" placeholder="নাম: chair" value="my-model">
+<button class="btn" id="genBtn">✨ 3D বানাও এখন</button>
+<div class="status" id="status"></div>
+<div class="done" id="done">
+<div style="font-weight:800;font-size:16px">✅ আসল মডেল রেডি! নিচে ঘুরিয়ে দেখো 👇</div>
+<model-viewer id="viewer" ar auto-rotate camera-controls shadow-intensity="1" exposure="1" environment-image="neutral" alt="3D Model"></model-viewer>
+<div class="hint">👆 এক আঙুলে ঘুরাও • দুই আঙুলে জুম • 📱 AR বাটনে ফোনে দেখো</div>
+<a id="dlBtn" href="#" target="_blank">⬇️ GLB ডাউনলোড</a>
+<a id="copyBtn" href="#" style="background:#23232f">🔗 লিংক কপি</a>
+<span class="small" id="linkTxt"></span>
+</div>
+</div>
+</div>
+<script>
+const fileInput=document.getElementById('file');
+const preview=document.getElementById('preview');
+const genBtn=document.getElementById('genBtn');
+const statusBox=document.getElementById('status');
+const doneBox=document.getElementById('done');
+const linkTxt=document.getElementById('linkTxt');
+const dlBtn=document.getElementById('dlBtn');
+const viewer=document.getElementById('viewer');
+const copyBtn=document.getElementById('copyBtn');
+fileInput.addEventListener('change',function(){const f=this.files[0];if(f){preview.src=URL.createObjectURL(f);preview.style.display='block';}});
+async function poll(jid){let t=0;while(t<200){try{const r=await fetch('/api/jobs/'+jid);const d=await r.json();const st=d.status||'processing';const pr=d.progress||'';statusBox.innerText='⏳ স্ট্যাটাস: '+st+' '+pr+'%\\nID: '+jid+'\\n'+(d.message||'Tripo AI 30-60s...');if(st==='completed'||st==='success'){const lr=await fetch('/api/jobs/'+jid+'/link');const ld=await lr.json();const url=ld.url||'/api/download/'+jid;const full=url.startsWith('http')?url:location.origin+url;linkTxt.innerText=full;dlBtn.href=full;viewer.src=full;viewer.style.display='block';doneBox.style.display='block';statusBox.innerText+='\\n\\n✅ হয়ে গেছে! নিচে 3D দেখো';break;}if(st==='failed'){statusBox.innerText+='\\n❌ ফেইল: '+(d.message||'');break;}}catch(e){statusBox.innerText='Poll error: '+e.message;}await new Promise(r=>setTimeout(r,3000));t++;}genBtn.disabled=false;genBtn.innerText='✨ 3D বানাও এখন';}
+genBtn.addEventListener('click',async function(){const file=fileInput.files[0];if(!file){alert('আগে Choose File এ চাপ দিয়ে একটা ছবি নাও ভাই!');return;}const label=document.getElementById('label').value||'my-model';genBtn.disabled=true;genBtn.innerText='⏳ আপলোড হচ্ছে...';statusBox.style.display='block';statusBox.innerText='🚀 আপলোড হচ্ছে...\\n'+file.name;doneBox.style.display='none';viewer.style.display='none';const fd=new FormData();fd.append('files',file);fd.append('labels',label);fd.append('preset','high');try{const res=await fetch('/api/jobs',{method:'POST',body:fd});const text=await res.text();let data;try{data=JSON.parse(text);}catch(e){throw new Error(text);}if(!res.ok)throw new Error(JSON.stringify(data));const jid=data.jid;statusBox.innerText='✅ Job: '+jid+'\\nTripo তে পাঠানো হয়েছে...';genBtn.innerText='⏳ 3D বানানো হচ্ছে...';poll(jid);}catch(e){statusBox.innerText='❌ Error:\\n'+e.message;alert(e.message);genBtn.disabled=false;genBtn.innerText='✨ 3D বানাও এখন';}});
+copyBtn.addEventListener('click',function(e){e.preventDefault();navigator.clipboard.writeText(linkTxt.innerText).then(()=>{copyBtn.innerText='✅ কপি হয়েছে!';setTimeout(()=>copyBtn.innerText='🔗 লিংক কপি',1500);});});
+</script>
+</body>
+</html>
+"""
 
+TRIPO_API_KEY = os.getenv("TRIPO_API_KEY", "").strip()
+print(f"TRIPO KEY SET: {bool(TRIPO_API_KEY)} len={len(TRIPO_API_KEY) if TRIPO_API_KEY else 0}")
 
-def tripo_headers():
+def tripo_create_task(image_path: Path):
     if not TRIPO_API_KEY:
-        raise RuntimeError(
-            "TRIPO_API_KEY সার্ভারে সেট করা নেই।"
-        )
-
-    return {
-        "Authorization": f"Bearer {TRIPO_API_KEY}"
-    }
-
-
-def api_json(response):
-    response.raise_for_status()
-    result = response.json()
-
-    if result.get("code", 0) not in (0, None):
-        raise RuntimeError(
-            f"Tripo API error: {result}"
-        )
-
-    return result
-
-
-def upload_image(image_path: Path) -> str:
-    """Tripo-তে ছবি আপলোড করে file_token নেয়।"""
-
-    with image_path.open("rb") as image:
-        response = requests.post(
-            f"{TRIPO_BASE}/files",
-            headers=tripo_headers(),
-            files={
-                "file": (
-                    image_path.name,
-                    image,
-                    "application/octet-stream",
-                )
-            },
-            timeout=120,
-        )
-
-    result = api_json(response)
-    data = result.get("data", {})
-    token = data.get("file_token")
-
-    if not token:
-        raise RuntimeError(
-            f"ছবির file_token পাওয়া যায়নি: {result}"
-        )
-
-    return token
-
-
-def create_tripo_task(image_tokens: dict) -> str:
-    """একটি ছবি বা একাধিক ভিউ থেকে আসল 3D মডেল তৈরি করে।"""
-
-    if len(image_tokens) == 1:
-        token = next(iter(image_tokens.values()))
-
-        url = f"{TRIPO_BASE}/generation/image-to-model"
-
-        payload = {
-            "input": token,
-            "model": "v3.1-20260211",
-            "texture": True,
-            "pbr": True,
-        }
-
-    else:
-        if "front" not in image_tokens:
-            raise RuntimeError(
-                "একাধিক ছবি ব্যবহারে সামনের ছবিটি প্রয়োজন।"
-            )
-
-        inputs = [
-            {view: token}
-            for view, token in image_tokens.items()
-        ]
-
-        url = f"{TRIPO_BASE}/generation/multiview-to-model"
-
-        payload = {
-            "inputs": inputs,
-            "model": "v3.1-20260211",
-            "texture": True,
-            "pbr": True,
-            "geometry_quality": "detailed",
-            "texture_quality": "detailed",
-        }
-
-    response = requests.post(
-        url,
-        headers={
-            **tripo_headers(),
-            "Content-Type": "application/json",
-        },
-        json=payload,
-        timeout=90,
-    )
-
-    result = api_json(response)
-    task_id = result.get("data", {}).get("task_id")
-
-    if not task_id:
-        raise RuntimeError(
-            f"Tripo task ID পাওয়া যায়নি: {result}"
-        )
-
-    return task_id
-
-
-def get_tripo_task(task_id: str):
-    response = requests.get(
-        f"{TRIPO_BASE}/tasks/{task_id}",
-        headers=tripo_headers(),
-        timeout=30,
-    )
-
-    return api_json(response).get("data", {})
-
-
-def download_and_validate_glb(url: str, destination: Path):
-    """সম্পূর্ণ ফাইল নামিয়ে GLB-এর সিগনেচার যাচাই করে।"""
-
-    if not url or not url.startswith("https://"):
-        raise RuntimeError(
-            "Tripo থেকে বৈধ HTTPS মডেল URL পাওয়া যায়নি।"
-        )
-
-    temp_path = destination.with_suffix(".tmp")
-
+        print("No TRIPO_API_KEY set")
+        return None
     try:
-        with requests.get(
-            url,
-            stream=True,
-            timeout=(20, 180),
-            allow_redirects=True,
-        ) as response:
+        url = "https://api.tripo3d.ai/v2/openapi/task"
+        headers = {"Authorization": f"Bearer {TRIPO_API_KEY}"}
+        with open(image_path, "rb") as f:
+            files = {"file": f}
+            data = {"type": "image_to_model"}
+            resp = requests.post(url, headers=headers, files=files, data=data, timeout=90)
+        print(f"Tripo create {resp.status_code} {resp.text[:500]}")
+        resp.raise_for_status()
+        j = resp.json()
+        task_id = j.get("data", {}).get("task_id") or j.get("task_id")
+        print(f"Tripo task_id {task_id}")
+        return task_id
+    except Exception as e:
+        print(f"Tripo create error: {e}")
+        return None
 
-            response.raise_for_status()
-
-            content_type = response.headers.get(
-                "content-type", ""
-            ).lower()
-
-            if "text/html" in content_type:
-                raise RuntimeError(
-                    "মডেলের বদলে HTML পেজ পাওয়া গেছে।"
-                )
-
-            total = 0
-
-            with temp_path.open("wb") as output:
-                for chunk in response.iter_content(
-                    chunk_size=1024 * 256
-                ):
-                    if not chunk:
-                        continue
-
-                    total += len(chunk)
-
-                    if total > 500 * 1024 * 1024:
-                        raise RuntimeError(
-                            "GLB ফাইল 500 MB সীমা ছাড়িয়েছে।"
-                        )
-
-                    output.write(chunk)
-
-        if total < 1000:
-            raise RuntimeError(
-                "GLB ফাইল অসম্পূর্ণ বা খুব ছোট।"
-            )
-
-        with temp_path.open("rb") as model:
-            header = model.read(12)
-
-        if (
-            len(header) < 12
-            or header[:4] != b"glTF"
-            or int.from_bytes(
-                header[4:8], "little"
-            ) != 2
-        ):
-            raise RuntimeError(
-                "ডাউনলোড করা ফাইল বৈধ GLB 2.0 নয়।"
-            )
-
-        declared_size = int.from_bytes(
-            header[8:12], "little"
-        )
-
-        if declared_size != total:
-            raise RuntimeError(
-                "GLB ফাইলের সাইজ যাচাই ব্যর্থ হয়েছে।"
-            )
-
-        temp_path.replace(destination)
-
-    finally:
-        if temp_path.exists():
-            temp_path.unlink()
-
-
-async def process_job(jid: str, image_paths: dict):
-    job = JOBS[jid]
-    job_dir = JOBS_DIR / jid
-
+def tripo_get_task(task_id: str):
     try:
-        job.update(
-            status="processing",
-            progress=5,
-            message="ছবি Tripo3D-তে আপলোড হচ্ছে...",
-        )
-
-        tokens = {}
-
-        for index, (view, path) in enumerate(
-            image_paths.items()
-        ):
-            token = await asyncio.to_thread(
-                upload_image, path
-            )
-
-            tokens[view] = token
-
-            job["progress"] = min(
-                5 + int((index + 1) / len(image_paths) * 15),
-                20,
-            )
-
-        job["message"] = (
-            "AI দিয়ে বাস্তব 3D মডেল তৈরি হচ্ছে..."
-        )
-
-        task_id = await asyncio.to_thread(
-            create_tripo_task, tokens
-        )
-
-        job["tripo_task"] = task_id
-        job["progress"] = 20
-
-        # সর্বোচ্চ প্রায় 15 মিনিট অপেক্ষা
-        for attempt in range(180):
-            await asyncio.sleep(5)
-
-            info = await asyncio.to_thread(
-                get_tripo_task, task_id
-            )
-
-            status = str(
-                info.get("status", "")
-            ).lower()
-
-            progress = info.get("progress", 0)
-
-            try:
-                progress = int(progress)
-            except (TypeError, ValueError):
-                progress = 0
-
-            job["progress"] = min(
-                20 + int(progress * 0.75), 95
-            )
-
-            if status in {
-                "failed", "error", "cancelled"
-            }:
-                raise RuntimeError(
-                    f"Tripo AI task ব্যর্থ: {info}"
-                )
-
-            if status in {"success", "completed", "succeeded"}:
-                output = info.get("output") or {}
-
-                model_url = (
-                    output.get("model_url")
-                    or output.get("pbr_model")
-                    or output.get("base_model")
-                    or output.get("model")
-                )
-
-                if not model_url:
-                    raise RuntimeError(
-                        "AI সফল বলেছে, কিন্তু GLB URL পাওয়া যায়নি।"
-                    )
-
-                job["message"] = (
-                    "মডেল ডাউনলোড ও যাচাই হচ্ছে..."
-                )
-
-                model_path = job_dir / "model.glb"
-
-                await asyncio.to_thread(
-                    download_and_validate_glb,
-                    model_url,
-                    model_path,
-                )
-
-                # যাচাই সম্পন্ন হওয়ার পরেই completed
-                job.update(
-                    status="completed",
-                    progress=100,
-                    message="বাস্তব GLB প্রস্তুত।",
-                    model_url=f"/api/download/{jid}",
-                    model_size=model_path.stat().st_size,
-                )
-
-                return
-
-        raise RuntimeError(
-            "AI নির্ধারিত সময়ের মধ্যে শেষ হয়নি। "
-            "কিছুক্ষণ পরে আবার task status পরীক্ষা করো।"
-        )
-
-    except Exception as exc:
-        job.update(
-            status="failed",
-            progress=0,
-            message=str(exc),
-            model_url=None,
-        )
-
+        url = f"https://api.tripo3d.ai/v2/openapi/task/{task_id}"
+        headers = {"Authorization": f"Bearer {TRIPO_API_KEY}"}
+        resp = requests.get(url, headers=headers, timeout=30)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as e:
+        print(f"Tripo get error: {e}")
+        return None
 
 @app.get("/", response_class=HTMLResponse)
 async def home():
     return FRONTEND_HTML
 
-
 @app.get("/api/health")
 async def health():
-    return {
-        "status": "ok",
-        "engine": "Tripo3D",
-        "tripo_configured": bool(TRIPO_API_KEY),
-    }
-
+    return {"status":"ok","tripo_configured": bool(TRIPO_API_KEY), "tripo_len": len(TRIPO_API_KEY) if TRIPO_API_KEY else 0, "jobs": len(JOBS)}
 
 @app.post("/api/jobs")
-async def create_job(
-    front: UploadFile = File(...),
-    left: Optional[UploadFile] = File(None),
-    back: Optional[UploadFile] = File(None),
-    right: Optional[UploadFile] = File(None),
-):
-    if not TRIPO_API_KEY:
-        raise HTTPException(
-            status_code=503,
-            detail="সার্ভারে TRIPO_API_KEY সেট করা নেই।",
-        )
-
-    uploads = {
-        "front": front,
-        "left": left,
-        "back": back,
-        "right": right,
-    }
-
-    selected = {
-        view: upload
-        for view, upload in uploads.items()
-        if upload is not None
-        and upload.filename
-    }
-
-    if not selected:
-        raise HTTPException(
-            status_code=400,
-            detail="কমপক্ষে একটি ছবি আপলোড করো।",
-        )
-
-    if len(selected) > 1 and "front" not in selected:
-        raise HTTPException(
-            status_code=400,
-            detail="একাধিক ছবি দিলে Front ছবিটি আবশ্যক।",
-        )
-
-    jid = str(uuid.uuid4())[:12]
+async def create_job(files: UploadFile = File(None), labels: str = Form("test"), preset: str = Form("high")):
+    if not files:
+        raise HTTPException(status_code=400, detail="No file")
+    jid = str(uuid.uuid4())[:8]
     job_dir = JOBS_DIR / jid
-    job_dir.mkdir(parents=True, exist_ok=False)
-
-    saved_paths = {}
-
-    try:
-        for view, upload in selected.items():
-            if upload.content_type not in ALLOWED_TYPES:
-                raise HTTPException(
-                    status_code=415,
-                    detail=f"{view} ছবির ফরম্যাট সমর্থিত নয়।",
-                )
-
-            content = await upload.read(
-                MAX_IMAGE_SIZE + 1
-            )
-
-            if not content or len(content) > MAX_IMAGE_SIZE:
-                raise HTTPException(
-                    status_code=413,
-                    detail=(
-                        f"{view} ছবি খালি অথবা 20 MB-এর বেশি।"
-                    ),
-                )
-
-            path = job_dir / f"{view}.image"
-            path.write_bytes(content)
-            saved_paths[view] = path
-
-    except Exception:
-        import shutil
-        shutil.rmtree(job_dir, ignore_errors=True)
-        raise
-
-    JOBS[jid] = {
-        "status": "queued",
-        "progress": 0,
-        "message": "কাজ শুরু হচ্ছে...",
-        "tripo_task": None,
-        "model_url": None,
-        "model_size": 0,
-    }
-
-    asyncio.create_task(
-        process_job(jid, saved_paths)
-    )
-
-    return {
-        "jid": jid,
-        "status": "queued",
-        "message": "AI কাজ শুরু হয়েছে।",
-    }
-
+    job_dir.mkdir(exist_ok=True)
+    img_path = job_dir / "input.jpg"
+    img_path.write_bytes(await files.read())
+    JOBS[jid] = {"status":"queued","progress":5,"label":labels,"tripo_task": None, "model_url": None, "message":"Queued"}
+    async def process_job():
+        try:
+            JOBS[jid]["status"]="processing"
+            JOBS[jid]["progress"]=10
+            JOBS[jid]["message"]="Uploading to Tripo..."
+            task_id = await asyncio.to_thread(tripo_create_task, img_path)
+            if not task_id:
+                JOBS[jid]["status"]="failed"
+                if not TRIPO_API_KEY:
+                    JOBS[jid]["message"]="TRIPO_API_KEY Render এ সেট নাই! Environment এ গিয়ে Add করো"
+                else:
+                    JOBS[jid]["message"]="Tripo task creation failed - Render Logs দেখো"
+                return
+            JOBS[jid]["tripo_task"]=task_id
+            JOBS[jid]["progress"]=20
+            JOBS[jid]["message"]=f"Tripo task {task_id} - processing..."
+            for _ in range(200):
+                await asyncio.sleep(3)
+                info = await asyncio.to_thread(tripo_get_task, task_id)
+                if not info: continue
+                data = info.get("data", {})
+                st = data.get("status")
+                prog = data.get("progress") or 0
+                try: JOBS[jid]["progress"]= int(prog)
+                except: JOBS[jid]["progress"]= min(95, JOBS[jid]["progress"]+1)
+                print(f"Task {task_id} status {st} prog {prog}")
+                if st in ["success","completed","succeeded"]:
+                    output = data.get("output", {})
+                    model_url = output.get("pbr_model") or output.get("model") or output.get("base_model") or ""
+                    print(f"Model URL {model_url}")
+                    JOBS[jid]["model_url"]=model_url
+                    JOBS[jid]["status"]="completed"
+                    JOBS[jid]["progress"]=100
+                    JOBS[jid]["message"]="Completed!"
+                    if model_url:
+                        try:
+                            r = requests.get(model_url, timeout=60)
+                            if r.ok:
+                                (job_dir / "model.glb").write_bytes(r.content)
+                                print(f"Saved GLB {len(r.content)} bytes")
+                        except Exception as e:
+                            print(f"Download GLB error {e}")
+                    break
+                if st in ["failed","error","cancelled"]:
+                    JOBS[jid]["status"]="failed"
+                    JOBS[jid]["message"]=f"Tripo failed: {data}"
+                    break
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            JOBS[jid]["status"]="failed"
+            JOBS[jid]["message"]=str(e)
+    asyncio.create_task(process_job())
+    return {"jid": jid, "status":"queued"}
 
 @app.get("/api/jobs/{jid}")
 async def get_job(jid: str):
     job = JOBS.get(jid)
-
     if not job:
-        raise HTTPException(
-            status_code=404,
-            detail="এই Job পাওয়া যায়নি।",
-        )
-
+        raise HTTPException(status_code=404, detail="Job not found")
     return {"jid": jid, **job}
 
+@app.get("/api/jobs/{jid}/link")
+async def get_link(jid: str):
+    job = JOBS.get(jid)
+    if job and job.get("model_url"):
+        return {"url": job["model_url"], "jid": jid, "direct": True}
+    fp = JOBS_DIR / jid / "model.glb"
+    if fp.exists() and fp.stat().st_size > 100:
+        return {"url": f"/api/download/{jid}", "jid": jid}
+    return {"url": f"/api/download/{jid}", "jid": jid, "status": job.get("status") if job else "unknown"}
 
 @app.get("/api/download/{jid}")
 async def download(jid: str):
     job = JOBS.get(jid)
-
-    if not job:
-        raise HTTPException(
-            status_code=404,
-            detail="Job পাওয়া যায়নি।",
-        )
-
-    path = JOBS_DIR / jid / "model.glb"
-
-    if (
-        job.get("status") != "completed"
-        or not path.is_file()
-        or path.stat().st_size < 1000
-    ):
-        raise HTTPException(
-            status_code=409,
-            detail="GLB এখনো প্রস্তুত নয়।",
-        )
-
-    with path.open("rb") as model:
-        if model.read(4) != b"glTF":
-            raise HTTPException(
-                status_code=500,
-                detail="GLB যাচাই ব্যর্থ।",
-            )
-
-    return FileResponse(
-        path,
-        media_type="model/gltf-binary",
-        filename=f"{jid}.glb",
-    )
-
-
-FRONTEND_HTML = r"""
-<!doctype html>
-<html lang="bn">
-<head>
-<meta charset="utf-8">
-<meta name="viewport"
- content="width=device-width,initial-scale=1">
-<title>NYZ REAL 3D AI</title>
-
-<script type="module"
- src="https://ajax.googleapis.com/ajax/libs/model-viewer/4.0.0/model-viewer.min.js">
-</script>
-
-<style>
-*{box-sizing:border-box}
-body{margin:0;padding:18px;background:#09111f;
-color:#f4f7ff;font-family:Arial,sans-serif}
-main{max-width:760px;margin:auto}
-h1{color:#ffbd45}
-p{color:#bdc8d9;line-height:1.6}
-.panel{background:#111d30;padding:16px;
-border-radius:16px;margin:15px 0}
-label{display:block;margin:13px 0}
-input{display:block;width:100%;margin-top:8px;
-padding:10px;background:#fff;color:#111;border-radius:8px}
-button,.download{display:inline-block;border:0;
-border-radius:10px;padding:13px 17px;margin:5px 3px;
-font-weight:bold;background:#ffbd45;color:#151515;
-text-decoration:none}
-button:disabled{opacity:.4}
-#status{white-space:pre-wrap;overflow-wrap:anywhere}
-progress{width:100%;height:18px}
-model-viewer{width:100%;height:420px;background:#17253a;
-border-radius:14px}
-.hidden{display:none}
-</style>
-</head>
-
-<body>
-<main>
-<h1>NYZ REAL 3D AI</h1>
-<p>তোমার ছবিগুলো থেকে Tripo3D AI দিয়ে 3D মডেল তৈরি করো।
-একাধিক ছবি দিলে একই বস্তুর বিভিন্ন দিকের ছবি দেবে।</p>
-
-<section class="panel">
-<form id="form">
-<label>সামনের ছবি (Front) — আবশ্যক
-<input name="front" type="file"
- accept="image/jpeg,image/png,image/webp" required>
-</label>
-
-<label>বাম পাশের ছবি (Left) — ঐচ্ছিক
-<input name="left" type="file"
- accept="image/jpeg,image/png,image/webp">
-</label>
-
-<label>পেছনের ছবি (Back) — ঐচ্ছিক
-<input name="back" type="file"
- accept="image/jpeg,image/png,image/webp">
-</label>
-
-<label>ডান পাশের ছবি (Right) — ঐচ্ছিক
-<input name="right" type="file"
- accept="image/jpeg,image/png,image/webp">
-</label>
-
-<button id="submit" type="submit">
-বাস্তব 3D মডেল তৈরি করো
-</button>
-</form>
-</section>
-
-<section class="panel">
-<div id="status">এখনো কোনো কাজ শুরু হয়নি।</div>
-<progress id="progress" max="100" value="0"></progress>
-</section>
-
-<section id="viewer-panel" class="panel hidden">
-<h2>তোমার তৈরি আসল GLB মডেল</h2>
-
-<model-viewer id="viewer"
- camera-controls
- touch-action="pan-y"
- auto-rotate
- shadow-intensity="1"
- exposure="1"
- environment-image="neutral"
- alt="AI generated 3D model">
-</model-viewer>
-
-<p>এক আঙুলে ঘোরাও, দুই আঙুলে জুম করো।</p>
-
-<a id="download" class="download hidden"
- href="#" download>GLB ডাউনলোড</a>
-</section>
-</main>
-
-<script>
-const form = document.getElementById("form");
-const statusBox = document.getElementById("status");
-const progress = document.getElementById("progress");
-const submit = document.getElementById("submit");
-const viewer = document.getElementById("viewer");
-const viewerPanel = document.getElementById("viewer-panel");
-const download = document.getElementById("download");
-
-let active = false;
-
-form.addEventListener("submit", async event => {
-  event.preventDefault();
-  if (active) return;
-
-  const data = new FormData(form);
-
-  for (const key of ["front", "left", "back", "right"]) {
-    const input = form.elements[key];
-    if (!input.files.length) data.delete(key);
-  }
-
-  active = true;
-  submit.disabled = true;
-  viewerPanel.classList.add("hidden");
-  download.classList.add("hidden");
-  viewer.removeAttribute("src");
-  progress.value = 0;
-
-  try {
-    const response = await fetch("/api/jobs", {
-      method: "POST",
-      body: data
-    });
-
-    const result = await response.json();
-
-    if (!response.ok) {
-      throw new Error(result.detail || "Job শুরু হয়নি");
-    }
-
-    const jid = result.jid;
-    statusBox.textContent = "AI কাজ শুরু হয়েছে...";
-
-    for (;;) {
-      await new Promise(resolve => setTimeout(resolve, 3000));
-
-      const check = await fetch("/api/jobs/" + jid);
-      const job = await check.json();
-
-      if (!check.ok) {
-        throw new Error(job.detail || "Job status পাওয়া যায়নি");
-      }
-
-      progress.value = job.progress || 0;
-      statusBox.textContent =
-        job.message + "\nঅগ্রগতি: " + progress.value + "%";
-
-      if (job.status === "failed") {
-        throw new Error(job.message || "AI মডেল তৈরি ব্যর্থ");
-      }
-
-      if (job.status === "completed") {
-        if (!job.model_url) {
-          throw new Error("GLB URL পাওয়া যায়নি");
-        }
-
-        const modelResponse = await fetch(job.model_url);
-
-        if (!modelResponse.ok) {
-          throw new Error("GLB ডাউনলোড যাচাই ব্যর্থ");
-        }
-
-        const blob = await modelResponse.blob();
-
-        if (blob.size < 1000) {
-          throw new Error("GLB ফাইল অসম্পূর্ণ");
-        }
-
-        const bytes = new Uint8Array(
-          await blob.slice(0, 4).arrayBuffer()
-        );
-
-        if (String.fromCharCode(...bytes) !== "glTF") {
-          throw new Error("এটি বৈধ GLB ফাইল নয়");
-        }
-
-        const objectURL = URL.createObjectURL(blob);
-        viewer.src = objectURL;
-
-        viewerPanel.classList.remove("hidden");
-        download.href = job.model_url;
-        download.classList.remove("hidden");
-
-        statusBox.textContent =
-          "সফল! আসল GLB তৈরি ও যাচাই সম্পন্ন হয়েছে।";
-
-        break;
-      }
-    }
-
-  } catch (error) {
-    statusBox.textContent = "সমস্যা: " + error.message;
-  } finally {
-    active = false;
-    submit.disabled = false;
-  }
-});
-</script>
-</body>
-</html>
-"""
+    fp = JOBS_DIR / jid / "model.glb"
+    if job and job.get("model_url"):
+        if fp.exists() and fp.stat().st_size > 1000:
+            return FileResponse(fp, media_type="model/gltf-binary", filename=f"{jid}.glb")
+        return RedirectResponse(job["model_url"])
+    if fp.exists() and fp.stat().st_size > 100:
+        return FileResponse(fp, media_type="model/gltf-binary", filename=f"{jid}.glb")
+    return JSONResponse({"message": job.get("message") if job else "Not found", "jid": jid, "status": job.get("status") if job else "unknown", "tripo_configured": bool(TRIPO_API_KEY)})
